@@ -43,7 +43,10 @@ def load(conn, room):
             "FROM media WHERE room_id=? ORDER BY ts", (room,)).fetchall()
     except Exception:
         pass
-    return g, msgs, nick, media
+    # 全库昵称（不限本群）：digest 正文可能引用跨群人名（如"隔壁群某某"），审计按全库扫
+    all_nicknames = [r[0] for r in conn.execute(
+        "SELECT DISTINCT nickname FROM members WHERE nickname IS NOT NULL")]
+    return g, msgs, nick, media, all_nicknames
 
 def compute(g, msgs, nick):
     chat = [m for m in msgs if not m["is_system"]]
@@ -547,6 +550,34 @@ def gallery_section(digest, cnum_str):
             f'<div class="rule"></div></div><div class="gal-grid">{tiles}</div></section>')
 
 
+# ---------- 隐私审计（踩坑 #38/#39 的机械化关卡）----------
+# 流程纪律会遗忘（实战两次泄露都是新增代码绕过 rename 管道），程序关卡不会：
+# 每次渲染自动对产物 HTML 做全量真名扫描，命中即在页面顶部插黄条警告 + 退出码 1。
+_SURNAMES = ("赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章"
+             "云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳鲍史唐费廉岑薛雷贺倪汤滕殷罗毕安常乐于时傅"
+             "皮卞齐康伍余元卜顾孟平黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项"
+             "祝董梁杜阮蓝闵季贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫房裘"
+             "缪干解应宗丁宣贲邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴陆荣翁荀羊於惠甄曲家封芮羿储靳"
+             "汲邴糜松井段富巫乌焦巴弓牧山谷车侯宓蓬全郗班仰秋仲伊宫宁仇栾暴甘钭厉戎祖武符刘景詹"
+             "束龙叶幸司韶郜黎蓟薄印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴胥能苍双闻莘党翟谭贡劳逄"
+             "姬申扶堵冉宰郦雍桑桂濮牛寿通边扈燕冀郏浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易"
+             "慎戈廖庾终暨居衡步都耿满弘匡国文寇广禄阙东欧殳沃利蔚越隆师巩聂晁勾敖融冷訾辛阚那简"
+             "饶空曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓")
+
+def privacy_audit(html, st):
+    """产物级真名扫描：members 全表昵称按「姓+1~2字」模式筛 → HTML 逐字匹配。
+    返回命中昵称列表。花名/成语类误报（如"花开富贵"）由调用方在 digest.rename 之外
+    用 digest.privacy_whitelist 白名单豁免。"""
+    import re as _re
+    digest_whitelist = st.get("_privacy_whitelist") or set()
+    pat = _re.compile(rf"^[{_SURNAMES}][\u4e00-\u9fa5]{{1,2}}$")
+    hits = []
+    for nm in st.get("_all_nicknames") or []:
+        if nm and pat.match(nm) and nm not in digest_whitelist and nm in html:
+            hits.append(nm)
+    return sorted(set(hits))
+
+
 def build(st, digest):
     g = st["g"]
     mx_day = max(st["daily"], key=lambda k: st["daily"][k])
@@ -785,9 +816,10 @@ def main():
     workdir = a.workdir or os.path.join(db_dir, ".workbuddy", "insights")
     conn = sqlite3.connect(a.db); conn.row_factory = sqlite3.Row
     room, name = fetch_room(conn, a.group)
-    g, msgs, nick, media = load(conn, room)
+    g, msgs, nick, media, all_nicks = load(conn, room)
     st = compute(g, msgs, nick)
     st["media"] = media
+    st["_all_nicknames"] = all_nicks
     safe = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", name).strip("_")
     digest_path = os.path.join(workdir, f"{safe}_digest.json")
     if not os.path.exists(digest_path):
@@ -803,10 +835,26 @@ def main():
     out = a.out or os.path.join(db_dir, "outputs", "rendered", f"{safe}_群刊.html")
     # 审计 D1：新机器/自定义 --out 的目录不存在时会 FileNotFoundError，先建目录
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    # ---- 隐私审计关卡（踩坑#38/#39 机械化：不依赖任何人记得跑扫描）----
+    # 每次渲染自动做全量真名扫描；命中即在页面顶部插黄条警告并 exit 1，
+    # 阻断"带着真名交付"。花名误报（如"花开富贵"）用 digest.privacy_whitelist 豁免。
+    st["_privacy_whitelist"] = set(digest.get("privacy_whitelist") or [])
+    hits = privacy_audit(doc, st)
+    if hits:
+        warn = ('<div style="background:#fff3cd;border:2px solid #A63D24;color:#7a2e12;padding:14px 18px;'
+                'border-radius:8px;margin:0 0 18px;font-size:14px;line-height:1.7">'
+                f'<b>⚠️ 隐私审计：检测到 {len(hits)} 个疑似真名未匿名 —— 本页面请勿分享！</b><br>'
+                '命中：' + "、".join(hits[:10]) + ('…' if len(hits) > 10 else '') +
+                '<br>处理：在 digest.json 的 rename 表加入映射后重渲染；确属花名误报则加入 privacy_whitelist。</div>')
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(doc.replace("<body>", "<body>" + warn, 1))
+        print(f"[!] 隐私审计：{len(hits)} 个疑似真名命中（{', '.join(hits[:8])}...）—— 已插警告条")
+        print(f"    处理：rename 补映射重渲染，或 digest.privacy_whitelist 豁免花名误报")
+        sys.exit(1)
     with open(out, "w", encoding="utf-8") as f:
         f.write(doc)
     print(f"OK {out} ({os.path.getsize(out)/1024:.0f} KB, 长文 {len(st['longs'])} 篇, "
-          f"图节点 {len((digest.get('graph') or {}).get('nodes', []))} 个)")
+          f"图节点 {len((digest.get('graph') or {}).get('nodes', []))} 个, 隐私审计通过 ✅")
 
 if __name__ == "__main__":
     main()
