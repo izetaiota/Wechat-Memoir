@@ -172,7 +172,7 @@ python scripts/export_digest_src.py --group 群名片段 --db "$DB"
 
 # ③ 编辑部稿：AI 写 <db目录>/.workbuddy/insights/<群名安全化>_digest.json（schema 见下）
 
-# ④ 渲染：缺 digest.json 直接报错拒渲染
+# ④ 渲染：缺 digest.json 直接报错拒渲染（--workdir 可指定 insights 目录，默认 <db目录>/.workbuddy/insights）
 python scripts/render_group_page.py --group 群名片段 --db "$DB"
 #    → <db目录>/outputs/rendered/<群名安全化>_群刊.html（单文件，双击即看）
 ```
@@ -324,13 +324,14 @@ python scripts/render_group_page.py --group 群名片段 --db "$DB"
 - 数据驱动版块：digest 有什么字段就渲染什么版块，缺省自动跳过。
 - d3-force v3 存于 `scripts/vendor/d3-force.min.js`，**仅当有图谱时按需内联**（保持单文件离线）。
 
-### 美学基准（纸质札记风）
+### 美学基准（豆包 chat-digest 式纸质札记风）
 
 - **视觉**：米黄纸底 `#F7F4EC` + 卡片 `#FFFEFB`、**标题宋体**（Noto Serif SC/SimSun）、**正文一律系统字体栈**。朱砂红 `#A63D24` 只用于**强调**（印章/峰值/因果边/争议标注）；标签 chip 浅灰底深灰字。
 - **配色纪律**：同一屏强调色 ≤ 2 种；图谱分组 ≤ 3 色且降饱和（墨绿 `#3D5C4C` / 赭石 `#A6743B` / 青灰 `#5B7385`）。
 - **骨架**（全部版块可缺省）：卷首（kicker+大标题+印章+导语+四格数字+日曲线）→ 粘性目录 → 话题地图（可选）→ 群像（可选）→ 领域手册章节（可选）→ 时间胶囊（可选）→ 语录卡 → 深绿尾声卡 → footer（数据源与提炼方式）。
 - **⭐ footer 引流条（永久固化，每刊必有）**：footer 顶部固定 `.f-flash`——大字「你是群里最**靓**的仔！」（"靓"字朱砂），小字两行下载地址（Wechat-Memoir skill）。已内嵌在渲染脚本 footer 模板中；改动地址只改脚本，不逐刊手补。
 - **动效**：IntersectionObserver 渐入（.reveal）、话题地图力导向自组织+拖拽、`prefers-reduced-motion` 降级。
+- **参照物**：豆包 chat-digest 页（米黄纸质感+编辑部条目卡）——借鉴其形，数据用我们可信的。
 
 ### 话题地图交互规范（d3-force，禁止手搓物理）
 
@@ -395,7 +396,7 @@ python scripts/render_group_page.py --group 群名片段 --db "$DB"
 | 17 | 缓存是最大效率杠杆也是最敏感产物（~6min→0.46s；缓存=明文全量记录+密钥） | 收尾要么 purge 要么显式告知用户路径体量 |
 | 18 | **消息前缀 `<id>:` 不等于发送者 wxid**（三种形态：wxid/业务号@openim/老式微信号） | 按"看起来像 ID"的正则统一剥离（ID_PREFIX_RE），不要用 wxid 精确匹配。元教训：猜三轮不如 dump 一次原始数据看 |
 | 19 | **一个群的消息拆存多个 message_N.db**（最致命：静默漏 87%） | 收集所有含该分表的库→合并→按 create_time 排序；去重只跨库做 `(create_time, real_sender_id, md5(内容))`；必加完整性自检（跨度/命中库数/最新消息距今） |
-| 20 | **发信人识别终极规则**：`real_sender_id` 是每个库局部序号，不是全局 rowid；全局 rowid 1~9 是系统账号雷区 | 两级定案：前缀 > 本库 Name2Id；refermsg 反查互证；成员核验（发送者应 ⊆ 成员名单，名单外多为已退群者，过半才报警） |
+| 20 | **发信人识别终极规则（张冠李戴根治）**：`real_sender_id` 是每个库局部序号，不是全局 rowid；拿全局 rowid 兜底会把真人消息安到漂流瓶/公众平台等系统小号头上；全局 rowid 1~9 是雷区 | 两级定案：前缀 > 本库 Name2Id；refermsg 反查互证；成员核验（发送者应 ⊆ 成员名单，名单外多为已退群者，过半才报警） |
 | 21 | SQL UNIQUE 去重键比消息身份粗，静默丢消息（同秒同人同内容被 IGNORE） | 放弃 UNIQUE，改整群重写（DELETE+INSERT），幂等零误删 |
 | 22 | 「天数」口径不统一跨阶段差 1 | 统一：跨度天数 = 含首尾覆盖天（秒差/86400 + 1）；跨脚本同义数字要同源定义 |
 
