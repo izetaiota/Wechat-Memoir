@@ -453,14 +453,17 @@ JS = """
 })();
 """
 
-def media_section(st, cnum_str):
+def media_section(st, cnum_str, anon_fn=None):
     """Roadmap 1.3-1.5：媒体三版块（群文件柜/表情图鉴/视频时刻）。
-    数据来自 stats.db media 表；无数据自动整体跳过。"""
+    数据来自 stats.db media 表；无数据自动整体跳过。
+    anon_fn：隐私匿名函数（rename 表）——所有名字出口必经（实测教训：新加版块漏接导致
+    表情图鉴表泄露真名，全量扫描抓出）。"""
     media = st.get("media") or []
     if not media:
         return ""
     from collections import Counter
-    nick = st["nick"]
+    _nm = (lambda n: anon_fn(n)) if anon_fn else (lambda n: n)
+    nick = {k: _nm(v) for k, v in st["nick"].items()}
     # ---- 群文件柜 ----
     files = [m for m in media if m["media_type"] == "file"]
     file_html = ""
@@ -650,7 +653,7 @@ def build(st, digest):
         f'<span class="d">{esc(c.get("date",""))}</span>'
         f'<span class="t">{c["text_html"] if "text_html" in c else esc(c["text"])}</span></div>' for c in caps)
     cno_caps = n_th + 2
-    media_sec = media_section(st, cnum(n_th + 2))
+    media_sec = media_section(st, cnum(n_th + 2), anon_fn=anon if rename_map else None)
     if media_sec:                          # 媒体版块插在主题章与胶囊之间，序号顺延
         cno_caps = n_th + 3
     gallery_sec = gallery_section(digest, cnum(cno_caps)) if media_sec else gallery_section(digest, cnum(n_th + 2))
