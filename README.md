@@ -141,6 +141,9 @@ Wechat-Memoir/
 | MMKV 派生实测打通：aes_key=md5(code+清洗wxid) hex 前 16 ASCII 字符；xor=code&0xFF；oracle 验证 | 2026-10-23 |
 | 消息 XML 的 aeskey/md5 与 attach 磁盘文件名是**两套哈希**，精确绑定不可行（实测 0/60、packed_info→Bubble 0/400）→ 图集走**按月目录抽样**策略 | 2026-10-23 |
 | 批量解密成功率实测：太阳群 30/30、90后群 24/24 均 100%（V2 全对齐公式+个别非对齐截块边界处理） | 2026-10-23 |
+| **破图复盘（用户实测抓出）**：解密"成功"≠可渲染——wxgf 格式（头77786766）浏览器不认、PNG 被硬存 .jpg 致 MIME 错、少量截断图；解密成功率 100% 中只有 ~40% 可渲染 | 2026-10-23 |
+| 修复：batch 落盘与 gallery 内嵌双重严格校验（JPEG 头尾/PNG IEND/GIF 分号），wxgf 与截断图直接跳过——宁缺毋滥 | 2026-10-23 |
+| wxgf 转码（VoipEngine.dll wxam_dec_wxam2pic_5）签名未明（试参崩溃，getWXGFInfo 可读宽高）——待逆向，图集先绕行 | 2026-10-23 |
 | kvcomm/key_*.statistic 文件存在于 AppData（MMKV 密钥派生原料） | 2026-10-23 |
 | 视频时长字段是 `playlength`（秒）非 cdntotaltime；`<type>6</type>` 是子元素非属性 | 2026-10-23 |
 | 老式 IM 图片附件 appmsg type=8 fileext=pic；两实测群几乎无 type=6 真文件（file=0 是数据事实） | 2026-10-23 |

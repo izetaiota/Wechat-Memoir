@@ -119,6 +119,19 @@ def looks_like_image(b: bytes) -> bool:
     return any(b.startswith(h) for h in IMG_HEADS)
 
 
+def renderable_image(b: bytes):
+    """严格校验：只认浏览器可渲染的完整图。返回扩展名（jpg/png/gif）或 None。
+    wxgf（微信自研）与截断文件不算——图集宁缺毋滥（破图比缺图伤体验，实测教训）。
+    JPEG: 头 ffd8ff + 尾 ffd9；PNG: 头 8950 4e47 + 尾 6082（IEND）；GIF: 头 GIF8 + 尾 3b。"""
+    if b[:3] == b"\xff\xd8\xff" and b[-2:] == b"\xff\xd9":
+        return ".jpg"
+    if b[:4] == b"\x89PNG" and b[-2:] == b"\x60\x82":
+        return ".png"
+    if b[:4] in (b"GIF8",) and b[-1:] == b";":
+        return ".gif"
+    return None
+
+
 def resolve_key(oracle_dat: str = None, code=None, wxid=None, no_cache=False):
     """取可用密钥：缓存 > 显式指定 > 全量派生+oracle 验证。返回 (aes, xor, 来源说明)。"""
     if not no_cache:
@@ -265,10 +278,11 @@ def cmd_batch(args):
             p = os.path.join(d, fn)
             img = decrypt_file(p, aes, xk, wxgf=args.wxgf)
             total += 1
-            if img and looks_like_image(img):
+            ext = renderable_image(img) if img else None
+            if ext:
                 decrypt_ok += 1
                 picked += 1
-                out = os.path.join(args.out_dir, f"{ym}_{fn[:-4]}.jpg")
+                out = os.path.join(args.out_dir, f"{ym}_{fn[:-4]}{ext}")
                 open(out, "wb").write(img)
     rate = decrypt_ok / total * 100 if total else 0
     print(f"抽样解密 {total} 张，成功 {decrypt_ok}（成功率 {rate:.0f}%）"

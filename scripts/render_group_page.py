@@ -518,15 +518,25 @@ def gallery_section(digest, cnum_str):
     if not d or not os.path.isdir(d):
         return ""
     import base64, glob as _g
-    files = sorted(_g.glob(os.path.join(d, "*.jpg")))[: g.get("count", 12)]
+    files = []
+    for pat in ("*.jpg", "*.png", "*.gif"):
+        files += _g.glob(os.path.join(d, pat))
+    files = sorted(files)[: g.get("count", 12)]
     if not files:
         return ""
     tiles = ""
     total = 0
     for f in files:
         b = open(f, "rb").read()
+        # 完整性门禁：只内嵌浏览器可渲染的完整图（防破图，实测教训：wxgf/截断文件会渲染失败）
+        mime = None
+        if b[:3] == b"\xff\xd8\xff" and b[-2:] == b"\xff\xd9": mime = "jpeg"
+        elif b[:4] == b"\x89PNG" and b[-2:] == b"\x60\x82": mime = "png"
+        elif b[:4] == b"GIF8" and b[-1:] == b";": mime = "gif"
+        if not mime:
+            continue
         total += len(b)
-        tiles += f'<figure class="gal"><img src="data:image/jpeg;base64,{base64.b64encode(b).decode()}" loading="lazy"><figcaption>{esc(os.path.basename(f)[8:16])}</figcaption></figure>'
+        tiles += f'<figure class="gal"><img src="data:image/{mime};base64,{base64.b64encode(b).decode()}" loading="lazy"><figcaption>{esc(os.path.basename(f)[8:16])}</figcaption></figure>'
     return (f'<section class="ch" id="gallery"><div class="ch-head reveal">'
             f'<div class="ch-index"><span class="cn">{cnum_str}</span><span class="meta">Gallery · Moments</span></div>'
             f'<h2>群像图集</h2><p class="lead">{esc(g.get("caption") or "从聊天里打捞的画面，按月抽样解密自本机图片库。")}'
