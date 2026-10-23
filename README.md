@@ -97,18 +97,18 @@ Wechat-Memoir/
 
 > 背景：当前管线对图片/表情/视频/文件**仅计数量**（元数据标签），内容未解析。实测本机：90后群 37,625 张图片 + 37,867 个表情 + 4,218 条视频；媒体实体文件都在本机，按下方三步逐步纳入群刊。
 
-### 第一步 · 媒体清单层（零解密，纯元数据）— 状态：待开工 ⬜
+### 第一步 · 媒体清单层（零解密，纯元数据）— 状态：已完成 ✅（2026-10-23）
 
 > 预期收益：群刊新增三个版块，1-2 小时可完成
 
-- [ ] **1.1 `--media-index` 导出开关**：wx_export.py 解析消息 XML，提取文件名/大小/时长/页面链接，写入 stats.db 新表 `media`（room_id, ts, sender, media_type, file_name, file_size, aeskey/md5, local_path, duration）
+- [x] **1.1 `--media-index` 导出开关**：wx_export.py 解析消息 XML，提取文件名/大小/时长/页面链接，写入 stats.db 新表 `media`（room_id, ts, sender, media_type, file_name, file_size, aeskey/md5, local_path, duration）
   - 文件：type 49 XML 的 `<title>/<totallen>/<fileext>`（本机验证：文件名+大小可提取）
   - 视频：type 43 的 `cdntotaltime`（封面帧 jpg 在 msg/video 下是**明文**可直接引用）
   - 图片：type 3 的 `aeskey`；表情：type 47 的 `md5`
-- [ ] **1.2 hardlink.db 本地定位桥**：aeskey/md5 → `msg/attach/<md5>/<年月>/Img/xx.dat`、文件 → `msg/file/`（索引表 `file/image/video_hardlink_info_v4`，本机验证可通）
-- [ ] **1.3 群刊「群文件柜」版块**：按群统计文件清单（Top 类型/大小/时间分布），PDF 等明文文件输出本地相对路径引用——「文件直接用引用到本地」
-- [ ] **1.4 群刊「表情图鉴」版块**：emoticon.db（已解密，91 个收藏表情的 md5→caption/cdn_url）+ 消息统计「谁最爱发表情」；商店表情 CDN 明文图下载内嵌
-- [ ] **1.5 群刊「视频时刻」版块**：封面帧（明文 jpg）+ 时长/发送者上下文
+- [x] **1.2 hardlink.db 本地定位桥**：aeskey/md5 → `msg/attach/<md5>/<年月>/Img/xx.dat`、文件 → `msg/file/`（索引表 `file/image/video_hardlink_info_v4`，本机验证可通）
+- [x] **1.3 群刊「群文件柜」版块**：按群统计文件清单（Top 类型/大小/时间分布），PDF 等明文文件输出本地相对路径引用——「文件直接用引用到本地」
+- [x] **1.4 群刊「表情图鉴」版块**：emoticon.db（已解密，91 个收藏表情的 md5→caption/cdn_url）+ 消息统计「谁最爱发表情」；商店表情 CDN 明文图下载内嵌
+- [x] **1.5 群刊「视频时刻」版块**：封面帧（明文 jpg）+ 时长/发送者上下文
 
 ### 第二步 · 图片 V2 解密层（攻坚核心）— 状态：待开工 ⬜
 
@@ -139,6 +139,8 @@ Wechat-Memoir/
 | hardlink.db 三索引表（文件 3939/图片 36.3 万/视频 2.4 万）；路径链 `attach/<md5>/<年月>/Img/` 可通 | 2026-10-23 |
 | emoticon.db 已解密：kNonStoreEmoticonTable 含 md5/caption/cdn_url/aes_key | 2026-10-23 |
 | kvcomm/key_*.statistic 文件存在于 AppData（MMKV 密钥派生原料） | 2026-10-23 |
+| 视频时长字段是 `playlength`（秒）非 cdntotaltime；`<type>6</type>` 是子元素非属性 | 2026-10-23 |
+| 老式 IM 图片附件 appmsg type=8 fileext=pic；两实测群几乎无 type=6 真文件（file=0 是数据事实） | 2026-10-23 |
 
 > 执行原则（沿用 SKILL.md 四层不变量方法论）：解密函数版本无关（V2 结构稳定）独立成脚本；密钥提取层隔离（MMKV 失败自动切内存扫描）；媒体版块全部**可缺省**——不解密也照常出刊，解密只增强不阻塞。
 

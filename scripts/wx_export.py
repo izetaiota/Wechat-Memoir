@@ -346,6 +346,7 @@ def main():
     cmd = [EXPORT, "--dec", dec, "--username", g["username"], "--out", out]
     if args.sqlite:
         cmd += ["--sqlite", args.sqlite]
+        cmd.append("--media-index")   # Roadmap 1.1：--sqlite 时自动带媒体索引（media 表）
     try:
         import zstandard  # noqa: F401
         cmd.append("--with-zstd")

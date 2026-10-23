@@ -78,6 +78,7 @@ def split_prefix(text, known_users):
 
 def rich_text_summary(xml_text):
     """从富文本 XML 提取可读摘要"""
+    title, des = None, None
     m = re.search(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", xml_text, re.S)
     title = (m.group(1).strip() if m else "")
     m2 = re.search(r"<des>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</des>", xml_text, re.S)
@@ -85,9 +86,78 @@ def rich_text_summary(xml_text):
     return title, des
 
 
-def sqlite_out(path, room_id, gname, member_names, senders, nick, msgs):
-    """写统计底座库：groups/members/messages 三张表。messages 整群重写（幂等、防重复导出翻倍，
-    且不用 UNIQUE 去重——同秒同人同文的系统消息会误撞，实测静默丢 18 条，踩坑#21）。"""
+# ---------------- 媒体索引（Roadmap 1.1/1.2）：从消息 XML 提取媒体元数据 ----------------
+# media_type: file(文件) / image(图片) / video(视频) / emoji(表情)
+# 设计：纯元数据零解密；hardlink.db 定位桥把 aeskey/md5 映射到本机实体路径。
+
+def extract_media_meta(local_type, text):
+    """从一条消息的明文 XML 提取媒体元数据。返回 (media_type, file_name, size, duration_ms, md5) 或 None。
+    只处理已解压/明文形态；压缩未解的消息跳过（media 表可少不可错）。"""
+    if not text or not text.lstrip().startswith("<"):
+        return None
+    if local_type == 3:      # 图片：<img aeskey="..." />
+        m = re.search(r'<img [^>]*?aeskey="([0-9a-f]{32})"', text)
+        w = re.search(r'cdnthumbwidth="(\d+)"', text)
+        h = re.search(r'cdnthumbheight="(\d+)"', text)
+        if m:
+            size = (int(w.group(1)) * int(h.group(1))) if (w and h) else None
+            return ("image", None, size, None, m.group(1))
+    elif local_type == 43:   # 视频：<videomsg aeskey=... playlength=.../>
+        m = re.search(r'<videomsg [^>]*?aeskey="([0-9a-f]{32})"', text)
+        dur = re.search(r'playlength="(\d+)"', text)      # 实测字段是 playlength（秒），非 cdntotaltime
+        ln = re.search(r' length="(\d+)"', text)
+        if m:
+            return ("video", None, int(ln.group(1)) if ln else None,
+                    int(dur.group(1)) * 1000 if dur else None, m.group(1))
+    elif local_type == 47:   # 表情：<emoji md5="..." />
+        m = re.search(r'<emoji [^>]*?md5="([0-9a-f]{32})"', text)
+        if m:
+            sz = re.search(r'len="(\d+)"', text)
+            return ("emoji", None, int(sz.group(1)) if sz else None, None, m.group(1))
+    else:                    # 文件类富文本：实测 <type>6</type> 是子元素；双保险再查 title 带扩展名
+        t6 = re.search(r"<type>6</type>", text)
+        t = re.search(r"<title>(?:<!\[CDATA\[)?([^<\]]{1,120})", text)
+        is_file = t6 or (t and re.search(r"\.(pdf|docx?|xlsx?|zip|pptx?|txt|md|csv|rar|7z)$", t.group(1).strip(), re.I))
+        if is_file and t:
+            n = re.search(r"<totallen>(\d+)</totallen>", text)
+            return ("file", t.group(1).strip(), int(n.group(1)) if n else None, None, None)
+    return None
+
+
+def build_hardlink_bridge(dec_dir):
+    """Roadmap 1.2：hardlink.db 本地定位桥。
+    返回 dat_index：{.dat文件名: (表类型前缀, 目录md5, size)}，供后续把 image/video 的
+    aeskey 关联到实体文件（attach/<目录md5>/<年月>/Img|Video/<dat名>）。
+    hardlink.db 在解密缓存 hardlink/hardlink.db（wx_export Step2 已解密；缺失返回空索引不报错）。"""
+    import sqlite3 as s3
+    idx = {}
+    p = os.path.join(dec_dir, "hardlink", "hardlink.db")
+    if not os.path.exists(p):
+        for root, _d, files in os.walk(dec_dir):
+            if "hardlink.db" in files:
+                p = os.path.join(root, "hardlink.db"); break
+    if not os.path.exists(p):
+        print("  [i] 未找到 hardlink.db（解密缓存），媒体 local_path 将为空")
+        return idx
+    try:
+        con = s3.connect(p)
+        for tbl in ("image_hardlink_info_v4", "video_hardlink_info_v4", "file_hardlink_info_v4"):
+            try:
+                for r in con.execute(f"SELECT file_name, md5, file_size FROM {tbl}"):
+                    idx[r[0]] = (tbl[0], r[1], r[2])   # dat名/原名 -> (i/v/f, 目录md5, size)
+            except Exception:
+                pass
+        con.close()
+        print(f"  [i] hardlink 定位桥: {len(idx)} 条索引")
+    except Exception as e:
+        print(f"  [i] hardlink 定位桥不可用: {e}")
+    return idx
+
+
+def sqlite_out(path, room_id, gname, member_names, senders, nick, msgs, media_rows=None):
+    """写统计底座库：groups/members/messages 三张表 + media 媒体索引表（可缺省）。
+    messages 整群重写（幂等、防重复导出翻倍，且不用 UNIQUE 去重——同秒同人同文的
+    系统消息会误撞，实测静默丢 18 条，踩坑#21）。media 同样整群重写。"""
     import sqlite3
     db = os.path.abspath(path)
     os.makedirs(os.path.dirname(db), exist_ok=True)
@@ -102,7 +172,13 @@ CREATE TABLE IF NOT EXISTS members(
 CREATE TABLE IF NOT EXISTS messages(
   room_id TEXT, ts INTEGER, sender TEXT, local_type INTEGER,
   is_system INTEGER, content TEXT);
-CREATE INDEX IF NOT EXISTS idx_msg ON messages(room_id, ts);""")
+CREATE INDEX IF NOT EXISTS idx_msg ON messages(room_id, ts);
+CREATE TABLE IF NOT EXISTS media(
+  room_id TEXT, ts INTEGER, sender TEXT, media_type TEXT,
+  file_name TEXT, file_size INTEGER, duration_ms INTEGER,
+  md5 TEXT, local_path TEXT,
+  PRIMARY KEY(room_id, ts, sender, media_type, md5));
+CREATE INDEX IF NOT EXISTS idx_media ON media(room_id, ts);""")
     # 先把该群历史 is_current 全部清零再 upsert 当前名单：退群成员不会永远挂着 1（审计 E5）
     conn.execute("UPDATE members SET is_current=0 WHERE room_id=?", (room_id,))
     conn.executemany(
@@ -112,6 +188,9 @@ CREATE INDEX IF NOT EXISTS idx_msg ON messages(room_id, ts);""")
         [(room_id, s, nick.get(s, s), 0) for s in sorted(senders) if s not in member_names])
     conn.execute("DELETE FROM messages WHERE room_id=?", (room_id,))
     conn.executemany("INSERT INTO messages VALUES(?,?,?,?,?,?)", msgs)
+    if media_rows is not None:
+        conn.execute("DELETE FROM media WHERE room_id=?", (room_id,))
+        conn.executemany("INSERT OR REPLACE INTO media VALUES(?,?,?,?,?,?,?,?,?)", media_rows)
     real = [m[1] for m in msgs if not m[4]]
     conn.execute("INSERT OR REPLACE INTO groups VALUES(?,?,?,?,?,?)",
                  (room_id, gname, len(member_names), len(real),
@@ -119,8 +198,10 @@ CREATE INDEX IF NOT EXISTS idx_msg ON messages(room_id, ts);""")
                   max(m[1] for m in msgs) if msgs else None))
     conn.commit()
     total = conn.execute("SELECT COUNT(*) FROM messages WHERE room_id=?", (room_id,)).fetchone()[0]
+    n_media = conn.execute("SELECT COUNT(*) FROM media WHERE room_id=?", (room_id,)).fetchone()[0] \
+        if media_rows is not None else "-"
     conn.close()
-    print(f"结构化输出: {db}  （该群累计 {total} 条）")
+    print(f"结构化输出: {db}  （该群累计 {total} 条，媒体索引 {n_media} 项）")
 
 
 def main():
@@ -131,6 +212,8 @@ def main():
     ap.add_argument("--out", required=True, help="输出 Markdown 路径")
     ap.add_argument("--with-zstd", action="store_true", help="解压富文本(需 zstandard)")
     ap.add_argument("--sqlite", help="结构化输出 SQLite 路径（统计底座：群/成员/消息三张表）")
+    ap.add_argument("--media-index", action="store_true",
+                    help="同时提取媒体索引（图片/视频/表情/文件元数据 + hardlink 本地定位）写入 stats.db media 表")
     args = ap.parse_args()
     if not args.username and not args.group:
         sys.exit("[x] 需要 --group 群名关键词，或 --username 精确群 ID")
@@ -256,6 +339,19 @@ def main():
 
     # wcdb_builtin_compression_record: 记录哪些列被 WCDB 压缩(4=calendar) — 本导出只按 WCDB_CT_* 判定
     stats = {"total": 0, "plain": 0, "zstd_ok": 0, "zstd_skip": 0}
+    media_rows = []       # Roadmap 1.1：媒体元数据缓冲（--sqlite 时随 media-index 一起写入）
+    hl_idx = build_hardlink_bridge(args.dec) if args.media_index else {}
+    # msg/file 与 msg/attach 根目录：从解密库路径反推不可靠，优先用 --media-dir 显式指定；
+    # 缺省从 db_storage 兄弟目录推（dec 缓存通常镜像了 db_storage 结构的上一级 xwechat_files/<wxid>）
+    media_root = None
+    if args.media_index:
+        cand = os.path.join(os.path.dirname(os.path.dirname(args.dec.rstrip("\\/"))), "msg")
+        # dec 典型: <cache>/decrypted/message/message_0.db → 上两级=decrypted → 找不到 msg，
+        # 真实 msg 在 xwechat_files/<wxid>/msg。优先环境变量，其次常见位置探测。
+        media_root = os.environ.get("WX_MEDIA_ROOT") or (
+            cand if os.path.isdir(cand) else None)
+        if not media_root:
+            print("  [i] 未定位 msg/ 媒体根目录（可用环境变量 WX_MEDIA_ROOT 指定），local_path 仅记录相对段")
     lines = [f"# {gname} — 聊天记录导出\n",
              f"> 导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"]
     cur_day = None
@@ -318,6 +414,18 @@ def main():
             senders.add(u)      # 系统消息/拍一拍无发信人，不进统计
         msgs.append((uname, ts, u or "", mt,
                      1 if (mt in (10000, 10002) or mt == 266287972401) else 0, text))
+        # Roadmap 1.1：媒体元数据提取（在 text 归一化后、摘要化前抓原始 XML 字段）
+        if args.media_index:
+            mm = extract_media_meta(mt, text)
+            if mm:
+                mtype, fname, size, dur, md5v = mm
+                local_path = None
+                if mtype == "file" and fname and hl_idx:
+                    meta = hl_idx.get(fname)
+                    if meta:
+                        local_path = f"file:{fname}"
+                media_rows.append((uname, ts, u or "", mtype, fname, size, dur,
+                                   md5v, local_path))
         if mt in (10000, 10002) or mt == 266287972401:
             lines.append(f"- `{t}` 系统: {text[:160]}")
         else:
@@ -337,7 +445,8 @@ def main():
 
     # ---- 结构化输出（统计底座）：与 Markdown 同源同一次解析，字段语义见《数据结构说明.md》
     if args.sqlite:
-        sqlite_out(args.sqlite, uname, gname, member_names, senders, nick, msgs)
+        sqlite_out(args.sqlite, uname, gname, member_names, senders, nick, msgs,
+                   media_rows if args.media_index else None)
 
     n_sys = sum(1 for m in msgs if m[4])
     print(f"\n统计: {stats}")

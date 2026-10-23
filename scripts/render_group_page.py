@@ -35,7 +35,15 @@ def load(conn, room):
         (room,)).fetchall()
     nick = {r["username"]: r["nickname"] for r in conn.execute(
         "SELECT username,nickname FROM members WHERE room_id=?", (room,))}
-    return g, msgs, nick
+    # 媒体索引（Roadmap 1.3-1.5）：表可缺省（老库无 media 表 = 无媒体版块）
+    media = []
+    try:
+        media = conn.execute(
+            "SELECT ts,sender,media_type,file_name,file_size,duration_ms,md5,local_path "
+            "FROM media WHERE room_id=? ORDER BY ts", (room,)).fetchall()
+    except Exception:
+        pass
+    return g, msgs, nick, media
 
 def compute(g, msgs, nick):
     chat = [m for m in msgs if not m["is_system"]]
@@ -315,6 +323,7 @@ td .pct{font-family:var(--sans);color:var(--muted);font-size:12px}
 .face .who .cnt{margin-left:auto;letter-spacing:.06em}
 .faces-note{margin-top:12px;font-family:var(--sans);font-size:12px;color:var(--muted)}
 .caps{max-width:860px}
+.cap-row{display:flex;flex-direction:column;gap:0;max-width:860px}
 .cap{display:flex;gap:18px;padding:17px 4px;border-bottom:1px solid var(--hair-2);align-items:baseline}
 .cap:last-child{border-bottom:none}
 .cap .lbl{flex:none;width:92px;font-family:var(--sans);font-size:12px;color:var(--cinnabar);letter-spacing:.12em;font-weight:700}
@@ -440,6 +449,63 @@ JS = """
 })();
 """
 
+def media_section(st, cnum_str):
+    """Roadmap 1.3-1.5：媒体三版块（群文件柜/表情图鉴/视频时刻）。
+    数据来自 stats.db media 表；无数据自动整体跳过。"""
+    media = st.get("media") or []
+    if not media:
+        return ""
+    from collections import Counter
+    nick = st["nick"]
+    # ---- 群文件柜 ----
+    files = [m for m in media if m["media_type"] == "file"]
+    file_html = ""
+    if files:
+        by_ext = Counter((m["file_name"] or "?").rsplit(".", 1)[-1].lower() for m in files if m["file_name"])
+        top_files = sorted(files, key=lambda m: -(m["file_size"] or 0))[:12]
+        rows = "".join(
+            f'<tr><td>{esc(m["file_name"] or "?")[:46]}</td>'
+            f'<td>{(m["file_size"] or 0) / 1048576:.1f} MB</td>'
+            f'<td>{esc(_t.strftime("%Y-%m-%d", _t.localtime(m["ts"])))}</td></tr>'
+            for m in top_files)
+        ext_str = " · ".join(f"{e}×{c}" for e, c in by_ext.most_common(6))
+        file_html = (f'<div class="table-card reveal"><div class="tc-head">群文件柜 · {len(files)} 份</div>'
+                     f'<p class="cc-sub" style="margin:0 0 8px">{esc(ext_str)}</p>'
+                     f'<div class="table-wrap"><table><tr><th>文件</th><th>大小</th><th>日期</th></tr>{rows}</table></div>'
+                     f'<p class="faces-note">文件以明文存于本机 msg/file/，可直接按名取用</p></div>')
+    # ---- 表情图鉴 ----
+    emojis = [m for m in media if m["media_type"] == "emoji"]
+    emoji_html = ""
+    if emojis:
+        by_sender = Counter(m["sender"] for m in emojis)
+        top_e = "".join(
+            f'<tr><td>{i}</td><td>{esc(nick.get(s, s) or "?")}</td><td>{c}</td>'
+            f'<td>{c * 100 // max(len(emojis), 1)}%</td></tr>'
+            for i, (s, c) in enumerate(by_sender.most_common(8), 1))
+        emoji_html = (f'<div class="table-card reveal"><div class="tc-head">表情图鉴 · {len(emojis)} 个</div>'
+                      f'<div class="table-wrap"><table><tr><th>#</th><th>谁在发</th><th>个数</th><th>占比</th></tr>{top_e}</table></div>'
+                      f'<p class="faces-note">自嘲与互怼的表情是这个群的情绪货币</p></div>')
+    # ---- 视频时刻 ----
+    vids = [m for m in media if m["media_type"] == "video"]
+    vid_html = ""
+    if vids:
+        total_s = sum((m["duration_ms"] or 0) for m in vids) / 1000
+        longest = max(vids, key=lambda m: (m["duration_ms"] or 0))
+        vid_html = (f'<div class="cap-row reveal">'
+                    f'<div class="cap"><span class="lbl">视频总量</span><span class="t">{len(vids)} 条 · 合计 {total_s/60:.0f} 分钟</span></div>'
+                    f'<div class="cap"><span class="lbl">最长一条</span><span class="t">{(longest["duration_ms"] or 0)/1000:.0f} 秒 · '
+                    f'{esc(nick.get(longest["sender"], longest["sender"] or "?"))} · '
+                    f'{esc(_t.strftime("%Y-%m-%d", _t.localtime(longest["ts"])))}</span></div>'
+                    f'</div>')
+    if not (file_html or emoji_html or vid_html):
+        return ""
+    body = file_html + emoji_html + vid_html
+    return (f'<section class="ch" id="media"><div class="ch-head reveal">'
+            f'<div class="ch-index"><span class="cn">{cnum_str}</span><span class="meta">Media · Files & Moments</span></div>'
+            f'<h2>群媒体志</h2><p class="lead">聊天之外的信物：发过的文件、刷屏的表情、拍下的瞬间——图片内容解析见 Roadmap 第二步。</p>'
+            f'<div class="rule"></div></div>{body}</section>')
+
+
 def build(st, digest):
     g = st["g"]
     mx_day = max(st["daily"], key=lambda k: st["daily"][k])
@@ -546,7 +612,10 @@ def build(st, digest):
         f'<span class="d">{esc(c.get("date",""))}</span>'
         f'<span class="t">{c["text_html"] if "text_html" in c else esc(c["text"])}</span></div>' for c in caps)
     cno_caps = n_th + 2
-    cno_quotes = n_th + 3 if caps_html else n_th + 2
+    media_sec = media_section(st, cnum(n_th + 2))
+    if media_sec:                          # 媒体版块插在主题章与胶囊之间，序号顺延
+        cno_caps = n_th + 3
+    cno_quotes = cno_caps + 1 if caps_html else cno_caps
     caps_section = (f'<section class="ch" id="capsules"><div class="ch-head reveal">'
                     f'<div class="ch-index"><span class="cn">{cnum(cno_caps)}</span><span class="meta">Interlude · Time Capsules</span></div>'
                     f'<h2>时间胶囊</h2><p class="lead">第一次与最后一次，疯狂与深夜——把值得记住的时刻封进胶囊。</p>'
@@ -576,7 +645,7 @@ def build(st, digest):
 </header>
 
 <nav class="toc" id="toc"><div class="toc-inner">
-  <a href="#graph">话题地图</a><a href="#voices">壹 · 群像</a>{''.join(f'<a href="#{th["id"]}">{cnum(i + 2)} · {th["title"]}</a>' for i, th in enumerate(digest.get("themes", [])))}{(f'<a href="#capsules">{cnum(cno_caps)} · 时间胶囊</a>' if caps_section else '')}<a href="#quotes">{cnum(cno_quotes)} · 语录</a></div></nav>
+  <a href="#graph">话题地图</a><a href="#voices">壹 · 群像</a>{''.join(f'<a href="#{th["id"]}">{cnum(i + 2)} · {th["title"]}</a>' for i, th in enumerate(digest.get("themes", [])))}{(f'<a href="#media">{cnum(n_th + 2)} · 群媒体志</a>' if media_sec else '')}{(f'<a href="#capsules">{cnum(cno_caps)} · 时间胶囊</a>' if caps_section else '')}<a href="#quotes">{cnum(cno_quotes)} · 语录</a></div></nav>
 
 {graph_section}
 
@@ -591,6 +660,8 @@ def build(st, digest):
 </section>
 
 {themes_html}
+
+{media_sec}
 
 {caps_section}
 
@@ -668,8 +739,9 @@ def main():
     workdir = a.workdir or os.path.join(db_dir, ".workbuddy", "insights")
     conn = sqlite3.connect(a.db); conn.row_factory = sqlite3.Row
     room, name = fetch_room(conn, a.group)
-    g, msgs, nick = load(conn, room)
+    g, msgs, nick, media = load(conn, room)
     st = compute(g, msgs, nick)
+    st["media"] = media
     safe = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", name).strip("_")
     digest_path = os.path.join(workdir, f"{safe}_digest.json")
     if not os.path.exists(digest_path):
