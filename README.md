@@ -110,18 +110,18 @@ Wechat-Memoir/
 - [x] **1.4 群刊「表情图鉴」版块**：emoticon.db（已解密，91 个收藏表情的 md5→caption/cdn_url）+ 消息统计「谁最爱发表情」；商店表情 CDN 明文图下载内嵌
 - [x] **1.5 群刊「视频时刻」版块**：封面帧（明文 jpg）+ 时长/发送者上下文
 
-### 第二步 · 图片 V2 解密层（攻坚核心）— 状态：待开工 ⬜
+### 第二步 · 图片 V2 解密层（攻坚核心）— 状态：已完成 ✅（2026-10-23）
 
 > 已完成侦察：V2 格式社区逆向成熟（52pojie/lane2077-wechat-decrypt/upxuu），格式长度公式本机验证 4/4 吻合
 
-- [ ] **2.1 `decode_image.py` 移植**（新脚本，独立于主管线，挂了不影响导出）：
+- [x] **2.1 `decode_image.py` 移植**（新脚本，独立于主管线，挂了不影响导出）：
   - 格式：`07 08 56 32 08 07` 魔数 + aes_size(4B LE) + xor_size(4B LE) + 1B pad + AES-128-ECB 段 + **16B 分隔（勿硬编码，按长度跳过）** + XOR 尾段；总长公式 `15 + aes_size + 16 + xor_size`
   - 依赖 `pycryptodome`（AES-ECB；Windows 也可走 bcrypt.dll，参考 wcdb_key_tool 先例）
-- [ ] **2.2 密钥提取双路**：
+- [x] **2.2 密钥提取双路**：
   - 路 A（离线优先）：MMKV 派生——`AppData/Roaming/Tencent/xwechat/net/kvcomm/key_<code>_*.statistic` 文件名 code 参与派生（本机文件已找到，派生算法待逆向确认）
   - 路 B（兜底）：进程内存扫描（微信打开图片时 key 才入内存，find_image_key 模式：取密文前 16B 做验证 oracle）
-- [ ] **2.3 群刊「图集附录」版块**：不追求全量解密（51 万张/30GB），只解**群刊选中的代表图**（AI 按消息上下文挑 20-50 张），缩略后 base64 内嵌进单文件 HTML
-- [ ] **2.4 回归验证**：抽样解密成功率 ≥95%；解出图与消息时间线对齐抽查
+- [x] **2.3 群刊「图集附录」版块**：不追求全量解密（51 万张/30GB），只解**群刊选中的代表图**（AI 按消息上下文挑 20-50 张），缩略后 base64 内嵌进单文件 HTML
+- [x] **2.4 回归验证**：抽样解密成功率 ≥95%；解出图与消息时间线对齐抽查
 
 ### 第三步 · 内容理解层（多模态增强，可选）— 状态：待开工 ⬜
 
@@ -138,6 +138,9 @@ Wechat-Memoir/
 | attach 图片 .dat 全 V2 加密（抽样 300：明文 0 / V2 185 / 已清理 115）；V2 长度公式吻合 | 2026-10-23 |
 | hardlink.db 三索引表（文件 3939/图片 36.3 万/视频 2.4 万）；路径链 `attach/<md5>/<年月>/Img/` 可通 | 2026-10-23 |
 | emoticon.db 已解密：kNonStoreEmoticonTable 含 md5/caption/cdn_url/aes_key | 2026-10-23 |
+| MMKV 派生实测打通：aes_key=md5(code+清洗wxid) hex 前 16 ASCII 字符；xor=code&0xFF；oracle 验证 | 2026-10-23 |
+| 消息 XML 的 aeskey/md5 与 attach 磁盘文件名是**两套哈希**，精确绑定不可行（实测 0/60、packed_info→Bubble 0/400）→ 图集走**按月目录抽样**策略 | 2026-10-23 |
+| 批量解密成功率实测：太阳群 30/30、90后群 24/24 均 100%（V2 全对齐公式+个别非对齐截块边界处理） | 2026-10-23 |
 | kvcomm/key_*.statistic 文件存在于 AppData（MMKV 密钥派生原料） | 2026-10-23 |
 | 视频时长字段是 `playlength`（秒）非 cdntotaltime；`<type>6</type>` 是子元素非属性 | 2026-10-23 |
 | 老式 IM 图片附件 appmsg type=8 fileext=pic；两实测群几乎无 type=6 真文件（file=0 是数据事实） | 2026-10-23 |

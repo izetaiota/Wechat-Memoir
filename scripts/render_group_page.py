@@ -324,6 +324,10 @@ td .pct{font-family:var(--sans);color:var(--muted);font-size:12px}
 .faces-note{margin-top:12px;font-family:var(--sans);font-size:12px;color:var(--muted)}
 .caps{max-width:860px}
 .cap-row{display:flex;flex-direction:column;gap:0;max-width:860px}
+.gal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;max-width:1000px}
+.gal{margin:0}
+.gal img{width:100%;height:150px;object-fit:cover;border-radius:6px;border:1px solid var(--hair);background:var(--paper-2)}
+.gal figcaption{font-family:var(--sans);font-size:11px;color:var(--muted);text-align:center;margin-top:4px}
 .cap{display:flex;gap:18px;padding:17px 4px;border-bottom:1px solid var(--hair-2);align-items:baseline}
 .cap:last-child{border-bottom:none}
 .cap .lbl{flex:none;width:92px;font-family:var(--sans);font-size:12px;color:var(--cinnabar);letter-spacing:.12em;font-weight:700}
@@ -506,6 +510,30 @@ def media_section(st, cnum_str):
             f'<div class="rule"></div></div>{body}</section>')
 
 
+def gallery_section(digest, cnum_str):
+    """Roadmap 2.3：图集附录——digest.gallery = {"dir":..., "count":N}，图片 base64 内嵌保持单文件。
+    由 decode_image.py batch 先解密出图，AI 挑选后填目录；缺省自动跳过。"""
+    g = digest.get("gallery") or {}
+    d = g.get("dir")
+    if not d or not os.path.isdir(d):
+        return ""
+    import base64, glob as _g
+    files = sorted(_g.glob(os.path.join(d, "*.jpg")))[: g.get("count", 12)]
+    if not files:
+        return ""
+    tiles = ""
+    total = 0
+    for f in files:
+        b = open(f, "rb").read()
+        total += len(b)
+        tiles += f'<figure class="gal"><img src="data:image/jpeg;base64,{base64.b64encode(b).decode()}" loading="lazy"><figcaption>{esc(os.path.basename(f)[8:16])}</figcaption></figure>'
+    return (f'<section class="ch" id="gallery"><div class="ch-head reveal">'
+            f'<div class="ch-index"><span class="cn">{cnum_str}</span><span class="meta">Gallery · Moments</span></div>'
+            f'<h2>群像图集</h2><p class="lead">{esc(g.get("caption") or "从聊天里打捞的画面，按月抽样解密自本机图片库。")}'
+            f'（{len(files)} 张 · {total//1024} KB）</p>'
+            f'<div class="rule"></div></div><div class="gal-grid">{tiles}</div></section>')
+
+
 def build(st, digest):
     g = st["g"]
     mx_day = max(st["daily"], key=lambda k: st["daily"][k])
@@ -615,6 +643,9 @@ def build(st, digest):
     media_sec = media_section(st, cnum(n_th + 2))
     if media_sec:                          # 媒体版块插在主题章与胶囊之间，序号顺延
         cno_caps = n_th + 3
+    gallery_sec = gallery_section(digest, cnum(cno_caps)) if media_sec else gallery_section(digest, cnum(n_th + 2))
+    if gallery_sec:
+        cno_caps += 1
     cno_quotes = cno_caps + 1 if caps_html else cno_caps
     caps_section = (f'<section class="ch" id="capsules"><div class="ch-head reveal">'
                     f'<div class="ch-index"><span class="cn">{cnum(cno_caps)}</span><span class="meta">Interlude · Time Capsules</span></div>'
@@ -645,7 +676,7 @@ def build(st, digest):
 </header>
 
 <nav class="toc" id="toc"><div class="toc-inner">
-  <a href="#graph">话题地图</a><a href="#voices">壹 · 群像</a>{''.join(f'<a href="#{th["id"]}">{cnum(i + 2)} · {th["title"]}</a>' for i, th in enumerate(digest.get("themes", [])))}{(f'<a href="#media">{cnum(n_th + 2)} · 群媒体志</a>' if media_sec else '')}{(f'<a href="#capsules">{cnum(cno_caps)} · 时间胶囊</a>' if caps_section else '')}<a href="#quotes">{cnum(cno_quotes)} · 语录</a></div></nav>
+  <a href="#graph">话题地图</a><a href="#voices">壹 · 群像</a>{''.join(f'<a href="#{th["id"]}">{cnum(i + 2)} · {th["title"]}</a>' for i, th in enumerate(digest.get("themes", [])))}{(f'<a href="#media">{cnum(n_th + 2)} · 群媒体志</a>' if media_sec else '')}{(f'<a href="#gallery">群像图集</a>' if gallery_sec else '')}{(f'<a href="#capsules">{cnum(cno_caps)} · 时间胶囊</a>' if caps_section else '')}<a href="#quotes">{cnum(cno_quotes)} · 语录</a></div></nav>
 
 {graph_section}
 
@@ -662,6 +693,8 @@ def build(st, digest):
 {themes_html}
 
 {media_sec}
+
+{gallery_sec}
 
 {caps_section}
 
