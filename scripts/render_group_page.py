@@ -556,13 +556,13 @@ def build(st, digest):
             f'只留下<em>值得重读的知识与共识</em>。数据同源统计底座，发信人经双重校验。')
     return f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{esc(g["name"])} · 群聊札记</title>
+<title>{esc(g["name"])} · 微信拾光</title>
 <style>{CSS}</style></head><body><div class="wrap">
 <header class="hero">
-  <div class="kicker"><span><b>群聊札记</b> · 精选</span><span>{d0s} — {d1s}</span></div>
+  <div class="kicker"><span><b>微信拾光</b> · 精选</span><span>{d0s} — {d1s}</span></div>
   <div class="hero-row"><div class="hero-title">
     <h1>{esc(g["name"])}<span class="en">A Community Digest · Vol.01</span></h1></div>
-    <div class="seal">精华<small>札记</small></div></div>
+    <div class="seal">拾光<small>留影</small></div></div>
   <p class="lede">{lede}</p>
   <div class="stats">
     <div class="cell"><div class="num">{st["span_days"]}<i>天</i></div><div class="lbl">时间跨度</div></div>
