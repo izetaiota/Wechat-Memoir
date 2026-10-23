@@ -33,7 +33,14 @@ AMBIG = {"机器人", "老百姓", "同花顺", "大全", "光大", "中国人�
 
 def load_names(cache_path, update=False):
     if not update and os.path.exists(cache_path):
-        return json.load(open(cache_path, encoding="utf-8"))
+        names = json.load(open(cache_path, encoding="utf-8"))
+        # 防坏缓存流出（实战教训：gbk 乱码版缓存曾混入产出，代码丢前导零）：
+        # key 必须全为 6 位数字字符串，否则拒绝缓存强制重拉
+        bad = [k for k in names if not (len(k) == 6 and k.isdigit())]
+        if not bad and names:
+            return names
+        print(f"  [!] 名单缓存异常（{len(bad)} 个坏 key），强制重拉")
+    os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
     req = urllib.request.Request(NAMES_URL, headers={"User-Agent": "Mozilla/5.0"})
     raw = urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "replace")
     names = {}
