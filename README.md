@@ -93,6 +93,55 @@ Wechat-Memoir/
 
 微信版本迭代可能使密钥提取失效。失效时按 `SKILL.md` 的「新版本适配判断顺序」逐层排查（症状 → 卡点层级 → 对应踩坑条目）。欢迎提交 issue 附微信版本号与失败日志。
 
+## Roadmap · 媒体处理三步走（2026-10-23 立项）
+
+> 背景：当前管线对图片/表情/视频/文件**仅计数量**（元数据标签），内容未解析。实测本机：90后群 37,625 张图片 + 37,867 个表情 + 4,218 条视频；媒体实体文件都在本机，按下方三步逐步纳入群刊。
+
+### 第一步 · 媒体清单层（零解密，纯元数据）— 状态：待开工 ⬜
+
+> 预期收益：群刊新增三个版块，1-2 小时可完成
+
+- [ ] **1.1 `--media-index` 导出开关**：wx_export.py 解析消息 XML，提取文件名/大小/时长/页面链接，写入 stats.db 新表 `media`（room_id, ts, sender, media_type, file_name, file_size, aeskey/md5, local_path, duration）
+  - 文件：type 49 XML 的 `<title>/<totallen>/<fileext>`（本机验证：文件名+大小可提取）
+  - 视频：type 43 的 `cdntotaltime`（封面帧 jpg 在 msg/video 下是**明文**可直接引用）
+  - 图片：type 3 的 `aeskey`；表情：type 47 的 `md5`
+- [ ] **1.2 hardlink.db 本地定位桥**：aeskey/md5 → `msg/attach/<md5>/<年月>/Img/xx.dat`、文件 → `msg/file/`（索引表 `file/image/video_hardlink_info_v4`，本机验证可通）
+- [ ] **1.3 群刊「群文件柜」版块**：按群统计文件清单（Top 类型/大小/时间分布），PDF 等明文文件输出本地相对路径引用——「文件直接用引用到本地」
+- [ ] **1.4 群刊「表情图鉴」版块**：emoticon.db（已解密，91 个收藏表情的 md5→caption/cdn_url）+ 消息统计「谁最爱发表情」；商店表情 CDN 明文图下载内嵌
+- [ ] **1.5 群刊「视频时刻」版块**：封面帧（明文 jpg）+ 时长/发送者上下文
+
+### 第二步 · 图片 V2 解密层（攻坚核心）— 状态：待开工 ⬜
+
+> 已完成侦察：V2 格式社区逆向成熟（52pojie/lane2077-wechat-decrypt/upxuu），格式长度公式本机验证 4/4 吻合
+
+- [ ] **2.1 `decode_image.py` 移植**（新脚本，独立于主管线，挂了不影响导出）：
+  - 格式：`07 08 56 32 08 07` 魔数 + aes_size(4B LE) + xor_size(4B LE) + 1B pad + AES-128-ECB 段 + **16B 分隔（勿硬编码，按长度跳过）** + XOR 尾段；总长公式 `15 + aes_size + 16 + xor_size`
+  - 依赖 `pycryptodome`（AES-ECB；Windows 也可走 bcrypt.dll，参考 wcdb_key_tool 先例）
+- [ ] **2.2 密钥提取双路**：
+  - 路 A（离线优先）：MMKV 派生——`AppData/Roaming/Tencent/xwechat/net/kvcomm/key_<code>_*.statistic` 文件名 code 参与派生（本机文件已找到，派生算法待逆向确认）
+  - 路 B（兜底）：进程内存扫描（微信打开图片时 key 才入内存，find_image_key 模式：取密文前 16B 做验证 oracle）
+- [ ] **2.3 群刊「图集附录」版块**：不追求全量解密（51 万张/30GB），只解**群刊选中的代表图**（AI 按消息上下文挑 20-50 张），缩略后 base64 内嵌进单文件 HTML
+- [ ] **2.4 回归验证**：抽样解密成功率 ≥95%；解出图与消息时间线对齐抽查
+
+### 第三步 · 内容理解层（多模态增强，可选）— 状态：待开工 ⬜
+
+- [ ] **3.1 图片打标/OCR**：解密后的代表图喂多模态模型（本地或 API），输出「聚餐照/K线截图/风景/合影」标签与图中文字
+- [ ] **3.2 打标结果进 AI 通读**：图片内容作为一等公民进切片语料——饭局照片进「活动大事记」、K 线截图进「行情复盘」
+- [ ] **3.3 表情包语义**：高频表情的 caption/场景归类，做「群表情文化」小节
+
+### 已验证的技术事实（做的时候直接用，别再踩）
+
+| 事实 | 验证日期 |
+|---|---|
+| msg/file 普通文件**明文**存储（抽样 400：PDF 191 全明文，pdf 占文件类型 83%） | 2026-10-23 |
+| msg/video 封面帧 jpg **明文**；正文 mp4 待验 | 2026-10-23 |
+| attach 图片 .dat 全 V2 加密（抽样 300：明文 0 / V2 185 / 已清理 115）；V2 长度公式吻合 | 2026-10-23 |
+| hardlink.db 三索引表（文件 3939/图片 36.3 万/视频 2.4 万）；路径链 `attach/<md5>/<年月>/Img/` 可通 | 2026-10-23 |
+| emoticon.db 已解密：kNonStoreEmoticonTable 含 md5/caption/cdn_url/aes_key | 2026-10-23 |
+| kvcomm/key_*.statistic 文件存在于 AppData（MMKV 密钥派生原料） | 2026-10-23 |
+
+> 执行原则（沿用 SKILL.md 四层不变量方法论）：解密函数版本无关（V2 结构稳定）独立成脚本；密钥提取层隔离（MMKV 失败自动切内存扫描）；媒体版块全部**可缺省**——不解密也照常出刊，解密只增强不阻塞。
+
 ## License
 
 MIT。内嵌第三方组件详见 `LICENSE` 的 Third-party notices（wcdb-key-tool / d3-force）。
