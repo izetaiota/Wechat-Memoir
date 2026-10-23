@@ -443,15 +443,30 @@ JS = """
 def build(st, digest):
     g = st["g"]
     mx_day = max(st["daily"], key=lambda k: st["daily"][k])
+    # 隐私匿名（digest.rename）：真名/昵称 -> 代号，作用于页面所有名字出口
+    # （发言榜、群像判词卡、语录署名、正文提及）。键 = 库内昵称原文（可只写真名部分，
+    # 做子串匹配，覆盖"真名-后缀"类群名片）；值 = 页面展示代号。
+    # 页面会在 footer 注明已匿名处理。未配置时零影响（老 digest 照常渲染）。
+    rename_map = digest.get("rename") or {}
+
+    def anon(nm):
+        if not rename_map or not nm:
+            return nm
+        for k, v in rename_map.items():
+            if k and k in nm:
+                return v
+        return nm
+
     # 发言榜：digest.exclude 里的账号（官方客服/机器人等）不计入
     excl = set(digest.get("exclude") or [])
     # 审计 D6：统计「实际被剔除掉的数量」而不是 exclude 里配了几个——
     # 昵称写不全/拼错时 len(excl) 会虚报，页面会声称剔除了根本没命中的账号。
     n_excl_hit = sum(1 for nm, _c in st["top_pool"] if (st["nick"].get(nm) or nm) in excl)
     rank = [(nm, c) for nm, c in st["top_pool"] if (st["nick"].get(nm) or nm) not in excl][:10]
+    n_renamed = sum(1 for nm, _c in rank if anon(st["nick"].get(nm) or nm) != (st["nick"].get(nm) or nm))
     mx = rank[0][1] if rank else 1
     top_rows = "".join(
-        f'<tr><td>{i}</td><td>{esc(st["nick"].get(nm) or nm)}</td><td><span class="bar{" top" if i==1 else ""}" style="width:{c/mx*180:.0f}px"></span>{c} <span class="pct">({c*100/st["total"]:.0f}%)</span></td></tr>'
+        f'<tr><td>{i}</td><td>{esc(anon(st["nick"].get(nm) or nm))}</td><td><span class="bar{" top" if i==1 else ""}" style="width:{c/mx*180:.0f}px"></span>{c} <span class="pct">({c*100/st["total"]:.0f}%)</span></td></tr>'
         for i, (nm, c) in enumerate(rank, 1))
     graph = digest.get("graph") or {}
     graph_html = graph_svg(graph) if graph.get("nodes") and graph.get("edges") else ""
@@ -474,10 +489,40 @@ def build(st, digest):
     def cnum(k):
         c = "壹贰叁肆伍陆柒捌玖拾"
         return c[k - 1] if 1 <= k <= len(c) else str(k)
-    themes_html = "".join(theme_section(th, cnum(i + 2)) for i, th in enumerate(themes))
+    def _apply_rename_th(th, fn):
+        """对 theme 的导语/条目标题/正文/表格做真名→代号替换（受控 HTML，子串替换安全）"""
+        th = dict(th)
+        if th.get("lead"): th["lead"] = fn(th["lead"])
+        if th.get("table"):
+            t = dict(th["table"])
+            t["rows"] = [[fn(c) if isinstance(c, str) else c for c in row] for row in t.get("rows", [])]
+            th["table"] = t
+        if th.get("items"):
+            th["items"] = [{**it, "title": fn(it.get("title") or ""),
+                            "body_html": fn(it.get("body_html") or "")} for it in th["items"]]
+        return th
+
     quotes_html = quote_cards(digest.get("quotes", []))
+    # 语录署名走匿名（rename 已在 build 顶部定义）
+    if rename_map:
+        quotes_html = "".join(
+            f'<div class="quote reveal"><div class="q-txt">{esc(q["text"])}</div>'
+            f'<div class="q-who">{esc(anon(q["who"]))} · {esc(q["date"])}</div></div>'
+            for q in digest.get("quotes", []))
     epilogue_html = digest.get("epilogue_html", "")
     faces = digest.get("personas") or []
+    # 正文/判词里的真名也统一替换（body_html 与 verdict 是受控 HTML，直接子串替换）
+    if rename_map:
+        def _apply_rename(s):
+            if not s: return s
+            for k, v in rename_map.items():
+                if k: s = s.replace(k, v)
+            return s
+        epilogue_html = _apply_rename(epilogue_html)
+        themes = [_apply_rename_th(t, _apply_rename) for t in themes]
+        faces = [{**p, "nick": anon(p["nick"]), "verdict": _apply_rename(p.get("verdict") or "")} for p in faces]
+    # 渲染必须在替换之后（此前渲染先行导致 body_html 真名漏网——实测抓出）
+    themes_html = "".join(theme_section(th, cnum(i + 2)) for i, th in enumerate(themes))
     faces_html = "".join(
         f'<div class="face reveal"><div class="v">{esc(p["verdict"])}</div>'
         f'<div class="who"><b>{esc(p["nick"])}</b>'
@@ -485,9 +530,17 @@ def build(st, digest):
         + (f'<span class="cnt">{esc(str(p["msgs"]))} 条</span>' if p.get("msgs") else "")
         + "</div></div>" for p in faces)
     faces_block = (f'<div class="faces">{faces_html}</div>'
-                   + (f'<p class="faces-note">{esc(digest["personas_note"])}</p>' if digest.get("personas_note") else "")
+                   + (f'<p class="faces-note">{esc(_apply_rename(digest["personas_note"]) if rename_map else digest["personas_note"])}</p>' if digest.get("personas_note") else "")
                    ) if faces_html else ""
     caps = digest.get("capsules") or []
+    if rename_map:
+        def _cap(c):
+            c = dict(c)
+            if c.get("text"): c["text"] = _apply_rename(c["text"])
+            if c.get("text_html"): c["text_html"] = _apply_rename(c["text_html"])
+            if c.get("who"): c["who"] = anon(c["who"])
+            return c
+        caps = [_cap(c) for c in caps]
     caps_html = "".join(
         f'<div class="cap reveal"><span class="lbl">{esc(c["label"])}</span>'
         f'<span class="d">{esc(c.get("date",""))}</span>'
@@ -530,7 +583,7 @@ def build(st, digest):
 <section class="ch" id="voices">
   <div class="ch-head reveal"><div class="ch-index"><span class="cn">壹</span><span class="meta">Chapter 00 · Voices</span></div>
   <h2>群像：谁在撑起这个群</h2>
-  <p class="lead">Top 10 贡献了全部消息的 <b>{sum(c for _, c in rank) * 100 // st["total"]}%</b>——少数人维持温度，多数人偶尔冒泡。{('（已剔除 %d 个官方/机器人账号）' % n_excl_hit) if n_excl_hit else ''}</p><div class="rule"></div></div>
+  <p class="lead">Top 10 贡献了全部消息的 <b>{sum(c for _, c in rank) * 100 // st["total"]}%</b>——少数人维持温度，多数人偶尔冒泡。{('（已剔除 %d 个官方/机器人账号）' % n_excl_hit) if n_excl_hit else ''}{('（已对 %d 位群友做代号匿名处理）' % n_renamed) if n_renamed else ''}</p><div class="rule"></div></div>
   <div class="table-card reveal"><div class="tc-head">发言榜</div><div class="table-wrap"><table>
     <thead><tr><th>#</th><th>群友</th><th>消息量 / 占比</th></tr></thead><tbody>{top_rows}</tbody>
   </table></div></div>
