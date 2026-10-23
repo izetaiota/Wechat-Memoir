@@ -1,0 +1,25 @@
+# 技能市场展示元数据（SkillHub 分发用，不影响技能加载；加载用 frontmatter 在 SKILL.md）
+name: Wechat-Memoir
+displayName:
+  zh: 微信拾光
+  en: Wechat-Memoir
+summary:
+  zh: "微信群回忆录一站式技能：从微信 Windows 4.x 本地加密数据库提取密钥、解密、导出 Markdown 与 SQLite 统计底座，再经 AI 通读提炼渲染成单文件纸刊风群刊网页。合并自 wechat-group-export（采矿队）与 wechat-group-digest（编辑部）。"
+  en: "One-stop WeChat group memoir skill: extract keys from WeChat Windows 4.x encrypted databases, decrypt, export Markdown + SQLite stats, then AI-refine and render into a single-file paper-style group digest page. Merged from wechat-group-export & wechat-group-digest."
+version: 2.0.0
+author: 简乐
+category: data-export
+tags:
+  - zh: 微信
+  - en: wechat
+  - zh: 回忆录
+  - en: memoir
+  - zh: 群刊
+  - en: digest
+  - zh: 聊天记录
+  - en: chat-history
+  - zh: 网页生成
+  - en: web-generation
+icon: "📔"
+homepage: https://github.com/izetaiota/Wechat-Memoir
+license: MIT
